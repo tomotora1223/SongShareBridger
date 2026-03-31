@@ -2,14 +2,30 @@ import discord
 import os
 import re
 import requests
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
-SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
+# --- 簡易HTTPサーバー（Renderの無料Web Service用） ---
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, *args):
+        pass  # アクセスログを抑制
+
+def run_server():
+    HTTPServer(("0.0.0.0", 10000), Handler).serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
+
+# --- Discord Bot 設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -51,6 +67,7 @@ PLATFORM_INFO = {
     },
 }
 
+
 def get_odesli_data(url: str) -> dict | None:
     try:
         res = requests.get(
@@ -64,11 +81,11 @@ def get_odesli_data(url: str) -> dict | None:
         print(f"Odesli APIエラー: {e}")
     return None
 
+
 def build_embed_and_view(data: dict):
     entity_data = data.get("entitiesByUniqueId", {})
     links_by_platform = data.get("linksByPlatform", {})
 
-    # 曲情報を取得（最初のエンティティから）
     title = "不明なタイトル"
     artist = ""
     thumbnail = None
@@ -79,22 +96,17 @@ def build_embed_and_view(data: dict):
         thumbnail = entity.get("thumbnailUrl") or thumbnail
         break
 
-    # どのプラットフォームか判定してembed色を決める
-    # 最初に見つかったプラットフォームを代表色に使用
-    embed_color = 0x5865F2  # デフォルト: Discord Blurple
+    embed_color = 0x5865F2
     for platform_key, info in PLATFORM_INFO.items():
         if platform_key in links_by_platform:
             embed_color = info["color"]
             break
 
     embed = discord.Embed(title=title, description=artist, color=embed_color)
-
     if thumbnail:
         embed.set_thumbnail(url=thumbnail)
-
     embed.set_footer(text="Powered by Odesli (song.link)")
 
-    # ボタンを作成
     view = discord.ui.View()
     for platform_key, info in PLATFORM_INFO.items():
         if platform_key in links_by_platform:
@@ -110,9 +122,11 @@ def build_embed_and_view(data: dict):
 
     return embed, view
 
+
 @client.event
 async def on_ready():
     print(f"ログイン完了: {client.user}")
+
 
 @client.event
 async def on_message(message: discord.Message):
@@ -124,6 +138,7 @@ async def on_message(message: discord.Message):
         return
 
     url = match.group(0)
+
     async with message.channel.typing():
         data = get_odesli_data(url)
 
@@ -138,5 +153,6 @@ async def on_message(message: discord.Message):
         return
 
     await message.channel.send(embed=embed, view=view)
+
 
 client.run(TOKEN)
